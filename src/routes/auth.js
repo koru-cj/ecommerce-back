@@ -4,15 +4,18 @@ import { pool } from '../db.js';
 import { body, validationResult } from 'express-validator';
 import { hashPassword, comparePassword, signToken } from '../lib/authHash.js';
 import { authRequired } from '../middlewares/authMiddleware.js';
-const router = Router();
+import { sendVerificationToken } from "../lib/tokenMailer.js";
 
-// Registro
+const router = Router();
+//
+// 🧱 REGISTER – Crea usuario y envía mail de verificación
+//
 router.post(
-  '/register',
+  "/register",
   [
-    body('name').notEmpty(),
-    body('email').isEmail(),
-    body('password').isLength({ min: 6 }),
+    body("name").notEmpty().withMessage("El nombre es obligatorio"),
+    body("email").isEmail().withMessage("Correo inválido"),
+    body("password").isLength({ min: 6 }).withMessage("Debe tener al menos 6 caracteres"),
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -20,28 +23,97 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
 
     const { name, email, password } = req.body;
-      
 
     try {
-      const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+      // 🔍 Verificar si ya existe el email
+      const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
       if (existing.rows.length)
-        return res.status(409).json({ error: 'El email ya está registrado' });
+        return res.status(409).json({ error: "El email ya está registrado" });
 
+      // 🔐 Hashear contraseña y crear usuario pendiente
       const hashed = await hashPassword(password);
       const result = await pool.query(
-        `INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email, role`,
+        `INSERT INTO users (name, email, password_hash, status, verificado)
+         VALUES ($1, $2, $3, 'pending', false)
+         RETURNING id, name, email`,
         [name, email, hashed]
       );
+      const user = result.rows[0];
 
-      const token = signToken({ id: result.rows[0].id, role: result.rows[0].role });
-      res.status(201).json({ token, user: result.rows[0] });
+      // ✉️ Generar token y enviar correo de verificación
+      await sendVerificationToken(user);
+
+      // ✅ Respuesta al frontend
+      res.status(201).json({
+        message:
+          "Usuario creado correctamente. Revisá tu correo para verificar la cuenta.",
+      });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Error en el servidor' });
+      console.error("💥 Error en registro:", err);
+      res.status(500).json({ error: "Error en el servidor" });
     }
   }
 );
 
+//
+// ✅ VERIFY EMAIL – Confirma cuenta
+//
+router.get("/verify-email", async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status (400).json({ error: "Token requerido" });
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM email_verifications WHERE token = $1 AND used = false`,
+      [token]
+    );
+    const record = result.rows[0];
+    if (!record) return res.status(400).json({ error: "Token inválido o usado" });
+    if (new Date(record.expires_at) < new Date())
+      return res.status(400).json({ error: "Token expirado" });
+
+    // Marcar usuario como verificado
+    await pool.query(
+      `UPDATE users SET verificado = true, status = 'active' WHERE id = $1`,
+      [record.user_id]
+    );
+    await pool.query(`UPDATE email_verifications SET used = true WHERE id = $1`, [
+      record.id,
+    ]);
+
+    res.json({ message: "Cuenta verificada correctamente ✅" });
+  } catch (err) {
+    console.error("💥 Error al verificar email:", err);
+    res.status(500).json({ error: "Error en el servidor" });
+  }
+});
+
+
+router.post("/resend-verification", async (req, res) => {
+  const { email } = req.body;
+  if (!email)
+    return res.status(400).json({ error: "El correo electrónico es requerido" });
+
+  try {
+    const result = await pool.query("SELECT id, name, email, verificado FROM users WHERE email = $1", [email]);
+    const user = result.rows[0];
+    if (!user)
+      return res.status(404).json({ error: "No se encontró un usuario con ese correo" });
+
+    if (user.verificado)
+      return res.status(400).json({ error: "Esta cuenta ya está verificada" });
+
+    await sendVerificationToken(user);
+
+    res.json({
+      message:
+        "Se envió un nuevo correo de verificación. Revisá tu bandeja o la carpeta de spam.",
+    });
+  } catch (err) {
+    console.error("💥 Error al reenviar verificación:", err);
+    res.status(500).json({ error: "Error en el servidor" });
+  }
+});
 // Login
 // src/routes/auth.js  ➜  dentro del handler /login
 router.post(
@@ -65,7 +137,7 @@ router.post(
       const user = result.rows[0];
       if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
 
-      const match = await comparePassword(password, user.password);
+      const match = await comparePassword(password, user.password_hash);
 
       if (!match) return res.status(401).json({ error: 'Credenciales inválidas' });
 

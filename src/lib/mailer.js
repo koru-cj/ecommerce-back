@@ -9,7 +9,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 (async function () {
   const { data, error } = await resend.emails.send({
     from: "Fuego Eterno <noreply@fuego-eterno.com>",   // 👈 tu dominio verificado
-    to: ["camilaabigailcortes@gmail.com"],                // 👈 tu mail real de prueba
+    to: ["vannordenjordi@gmail.com"],                // 👈 tu mail real de prueba
     subject: "🔥 ¡Fuego Eterno funcionando!",
     html: `
       <div style="font-family: Arial, sans-serif; padding: 16px; color: #333;">
