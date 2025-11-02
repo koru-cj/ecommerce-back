@@ -159,13 +159,14 @@ router.post(
 router.get('/me', authRequired(), async (req, res) => {
   try {
     const { id } = req.user;
-    const result = await pool.query('SELECT id, name, email, role, created_at, phone, document_number, address, city, postal_code, country FROM users WHERE id = $1', [id]);
+    const result = await pool.query('SELECT id, name, email, role, created_at, phone, document_number, address, city, postal_code, country, verificado, google_id, avatar_url FROM users WHERE id = $1', [id]);
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error en el servidor' });
   }
 });
+
 
 // Actualizar datos del usuario con validaciones
 router.patch(

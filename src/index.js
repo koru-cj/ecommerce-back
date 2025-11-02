@@ -7,6 +7,7 @@ import productsRouter from './routes/products.js';
 
 import categoriesRouter from './routes/categories.js';
 import authRouter from './routes/auth.js';
+import authGoogleRouter from './routes/authGoogle.js';
 import adminRouter from './routes/admin.js';
 
 import wishlistRouter from './routes/wishlist.js';
@@ -31,6 +32,7 @@ app.use(express.json());
 
 app.use('/api/v1', rootRouter);
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/auth', authGoogleRouter);
 app.use('/api/v1/dashboard', adminRouter);
 app.use('/api/v1/products', productsRouter);  
 app.use('/api/v1/categories', categoriesRouter);  
