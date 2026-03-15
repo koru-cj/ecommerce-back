@@ -19,6 +19,8 @@ import cartRouter from './routes/cart.js';
 import checkoutRouter from './routes/checkout.js';
 import ordersRouter from './routes/orders.js'
 import paymentRoutes from './routes/payments.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -26,22 +28,33 @@ const PORT = process.env.PORT || 4000;
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_LOCAL_URL,
+  'https://ecommerce-front-nine-inky.vercel.app',
+  'http://localhost:5173',
 ].filter(Boolean);
 
 app.use(cors({
-  origin: (origin, callback) => {
+  origin: function (origin, callback) {
+    console.log('CORS origin recibido:', origin);
+
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    return callback(new Error(`CORS bloqueado para origen: ${origin}`));
+    console.log('CORS origin bloqueado:', origin);
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+app.options('*', cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
+
 app.use(morgan('dev'));
 app.use(express.json());
 
@@ -60,7 +73,7 @@ app.use('/api/v1/cart', cartRouter);
 app.use('/api/v1/checkout', checkoutRouter); 
 app.use('/api/v1/orders', ordersRouter);
 
-app.use("/api/payments", paymentRoutes);
+app.use("/api/v1/payments", paymentRoutes);
 
 (async () => {
   try {
