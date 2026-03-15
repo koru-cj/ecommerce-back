@@ -30,6 +30,7 @@ function parseXSignature(headerValue = '') {
 
 function validateMercadoPagoSignature(req) {
   const secret = process.env.MP_WEBHOOK_SECRET;
+
   if (!secret) {
     console.warn('MP_WEBHOOK_SECRET no configurado. Se omite validación de firma.');
     return true;
@@ -94,6 +95,7 @@ router.post('/init', authRequired(), async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // 1) Carrito + lock de productos para validar stock actual
     const { rows: items } = await client.query(
       `
       SELECT
@@ -114,14 +116,16 @@ router.post('/init', authRequired(), async (req, res) => {
       throw new Error('Carrito vacío');
     }
 
+    // 2) Validar stock disponible ahora, pero NO descontar todavía
     for (const it of items) {
       if (Number(it.stock) < Number(it.quantity)) {
         throw new Error(`Sin stock de ${it.name}`);
       }
     }
 
+    // 3) Totales
     const subtotal = items.reduce(
-      (s, it) => s + Number(it.price) * Number(it.quantity),
+      (sum, it) => sum + Number(it.price) * Number(it.quantity),
       0
     );
     const shipping = 0;
@@ -129,6 +133,7 @@ router.post('/init', authRequired(), async (req, res) => {
     const tax = 0;
     const total = subtotal - discount + shipping + tax;
 
+    // 4) Snapshot del usuario
     const { rows: [profile] } = await client.query(
       `
       SELECT
@@ -165,6 +170,7 @@ router.post('/init', authRequired(), async (req, res) => {
       document_number: profile.document_number ?? null,
     };
 
+    // 5) Crear orden
     const idem = crypto.randomUUID();
 
     const { rows: [order] } = await client.query(
@@ -221,6 +227,7 @@ router.post('/init', authRequired(), async (req, res) => {
 
     const orderId = order.id;
 
+    // 6) Insertar items SIN descontar stock
     const insertItemSQL = `
       INSERT INTO order_items (order_id, product_id, quantity, unit_price)
       VALUES ($1, $2, $3, $4)
@@ -239,8 +246,10 @@ router.post('/init', authRequired(), async (req, res) => {
       ]);
     }
 
+    // 7) Vaciar carrito
     await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
 
+    // 8) Crear payment local
     const paymentMethod = channel === 'mercadopago' ? 'mercadopago' : 'manual';
 
     const paymentMetadata = {
@@ -291,6 +300,7 @@ router.post('/init', authRequired(), async (req, res) => {
       ]
     );
 
+    // 9) Canal WhatsApp
     if (channel === 'whatsapp') {
       await client.query('COMMIT');
 
@@ -342,11 +352,31 @@ router.post('/init', authRequired(), async (req, res) => {
       });
     }
 
+    // 10) Canal Mercado Pago
     if (!process.env.MP_ACCESSTOKEN) {
       throw new Error('Falta configurar MP_ACCESSTOKEN.');
     }
+    if (!process.env.FRONTEND_URL) {
+      throw new Error('Falta configurar FRONTEND_URL.');
+    }
+    if (!process.env.BACKEND_PUBLIC_URL) {
+      throw new Error('Falta configurar BACKEND_PUBLIC_URL.');
+    }
 
     const preference = new Preference(mpClient);
+
+    const successUrl = `${process.env.FRONTEND_URL}/payment/success`;
+    const pendingUrl = `${process.env.FRONTEND_URL}/payment/pending`;
+    const failureUrl = `${process.env.FRONTEND_URL}/payment/failure`;
+    const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`;
+
+    console.log('MP preference URLs', {
+      successUrl,
+      pendingUrl,
+      failureUrl,
+      notificationUrl,
+      orderId,
+    });
 
     const preferenceResult = await preference.create({
       body: {
@@ -362,11 +392,11 @@ router.post('/init', authRequired(), async (req, res) => {
           email: profile?.email || undefined,
         },
         external_reference: String(orderId),
-        notification_url: `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`,
+        notification_url: notificationUrl,
         back_urls: {
-          success: `${process.env.FRONTEND_URL}/payment/success`,
-          pending: `${process.env.FRONTEND_URL}/payment/pending`,
-          failure: `${process.env.FRONTEND_URL}/payment/failure`,
+          success: successUrl,
+          pending: pendingUrl,
+          failure: failureUrl,
         },
         auto_return: 'approved',
         metadata: {
@@ -376,6 +406,16 @@ router.post('/init', authRequired(), async (req, res) => {
         },
       },
     });
+
+    console.log('MP preferenceResult', {
+      id: preferenceResult?.id,
+      init_point: preferenceResult?.init_point,
+      sandbox_init_point: preferenceResult?.sandbox_init_point,
+    });
+
+    if (!preferenceResult?.init_point) {
+      throw new Error('Mercado Pago no devolvió init_point.');
+    }
 
     await client.query(
       `
@@ -400,7 +440,7 @@ router.post('/init', authRequired(), async (req, res) => {
     return res.json({
       orderId,
       total,
-      mp_init_point: preferenceResult.init_point || null,
+      mp_init_point: preferenceResult.init_point,
       pay_url: null,
     });
   } catch (e) {
@@ -508,6 +548,7 @@ router.post('/webhook', async (req, res) => {
       const mpStatus = payment.status ?? null;
       const mpStatusDetail = payment.status_detail ?? null;
 
+      // Pago aprobado: acá se descuenta stock de verdad
       if (mpStatus === 'approved') {
         const { rows: orderItems } = await client.query(
           `
