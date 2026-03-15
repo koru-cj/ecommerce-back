@@ -24,6 +24,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_LOCAL_URL,
@@ -34,7 +35,7 @@ const allowedOrigins = [
 console.log('CORS allowedOrigins:', allowedOrigins);
 
 const corsOptions = {
-  origin: function (origin, callback) {
+  origin: (origin, callback) => {
     console.log('CORS origin recibido:', origin);
 
     if (!origin) return callback(null, true);
@@ -43,7 +44,6 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    console.log('CORS origin bloqueado:', origin);
     return callback(null, false);
   },
   credentials: true,
@@ -52,7 +52,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 
 app.use(morgan('dev'));
 app.use(express.json());
