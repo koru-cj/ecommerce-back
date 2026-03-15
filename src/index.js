@@ -7,6 +7,7 @@ import productsRouter from './routes/products.js';
 
 import categoriesRouter from './routes/categories.js';
 import authRouter from './routes/auth.js';
+import authGoogleRouter from './routes/authGoogle.js';
 import adminRouter from './routes/admin.js';
 
 import wishlistRouter from './routes/wishlist.js';
@@ -17,6 +18,7 @@ import cartRouter from './routes/cart.js';
 
 import checkoutRouter from './routes/checkout.js';
 import ordersRouter from './routes/orders.js'
+import paymentRoutes from './routes/payments.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -46,6 +48,7 @@ app.use(express.json());
 
 app.use('/api/v1', rootRouter);
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/auth', authGoogleRouter);
 app.use('/api/v1/dashboard', adminRouter);
 app.use('/api/v1/products', productsRouter);  
 app.use('/api/v1/categories', categoriesRouter);  
@@ -56,6 +59,8 @@ app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/cart', cartRouter);
 app.use('/api/v1/checkout', checkoutRouter); 
 app.use('/api/v1/orders', ordersRouter);
+
+app.use("/api/payments", paymentRoutes);
 
 (async () => {
   try {
