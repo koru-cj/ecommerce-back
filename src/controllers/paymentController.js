@@ -17,12 +17,12 @@ export const createPreference = async (req, res) => {
           },
         ],
         back_urls: {
-          success: "https://tu-frontend.com/payment/success",
-          pending: "https://tu-frontend.com/payment/pending",
-          failure: "https://tu-frontend.com/payment/failure",
+          success: `${process.env.FRONTEND_URL}/payment/success`,
+          pending: `${process.env.FRONTEND_URL}/payment/pending`,
+          failure: `${process.env.FRONTEND_URL}/payment/failure`,
         },
         auto_return: "approved",
-        notification_url: `${process.env.MP_BASE_URL}/api/payments/webhook`,
+        notification_url: `${process.env.MP_BASE_URL}/payments/webhook`,
         external_reference: "ORDER_12345",
       },
     });
