@@ -344,6 +344,93 @@ router.post('/orders/:id/confirm-payment', authRequired('admin'), async (req, re
     res.status(400).json({ error: 'No se pudo confirmar el pago' });
   }
 });
+router.get('/orders', authRequired('admin'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        o.id,
+        o.user_id,
+        u.name AS user_name,
+        u.email AS user_email,
+        o.status,
+        o.payment_status,
+        o.channel,
+        o.currency,
+        o.subtotal,
+        o.discount,
+        o.shipping_cost,
+        o.tax,
+        o.total,
+        o.created_at,
+        o.updated_at,
+        p.id AS payment_id,
+        p.method AS payment_method,
+        p.status AS payment_record_status,
+        p.provider_id,
+        p.provider_reference,
+        p.provider_status,
+        p.provider_status_detail,
+        p.amount AS payment_amount
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN payments p ON p.order_id = o.id
+      ORDER BY o.created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error al obtener órdenes admin:', err);
+    res.status(500).json({ error: 'Error al obtener órdenes' });
+  }
+});
+router.get('/orders/:id', authRequired('admin'), async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { rows: [order] } = await pool.query(`
+      SELECT
+        o.*,
+        u.name AS user_name,
+        u.email AS user_email,
+        p.id AS payment_id,
+        p.method AS payment_method,
+        p.status AS payment_record_status,
+        p.provider_id,
+        p.provider_reference,
+        p.provider_status,
+        p.provider_status_detail,
+        p.provider_payload
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN payments p ON p.order_id = o.id
+      WHERE o.id = $1
+    `, [id]);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Orden no encontrada' });
+    }
+
+    const itemsResult = await pool.query(`
+      SELECT
+        oi.*,
+        pr.name AS product_name,
+        pr.image_url
+      FROM order_items oi
+      LEFT JOIN products pr ON pr.id = oi.product_id
+      WHERE oi.order_id = $1
+      ORDER BY oi.product_id
+    `, [id]);
+
+    res.json({
+      ...order,
+      items: itemsResult.rows,
+    });
+  } catch (err) {
+    console.error('Error al obtener detalle admin de orden:', err);
+    res.status(500).json({ error: 'Error al obtener detalle de orden' });
+  }
+});
+
 
 
 export default router;

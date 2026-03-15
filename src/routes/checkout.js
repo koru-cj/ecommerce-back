@@ -246,8 +246,6 @@ router.post('/init', authRequired(), async (req, res) => {
       ]);
     }
 
-    // 7) Vaciar carrito
-    await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [userId]);
 
     // 8) Crear payment local
     const paymentMethod = channel === 'mercadopago' ? 'mercadopago' : 'manual';

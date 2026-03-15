@@ -218,6 +218,18 @@ router.post('/webhook', async (req, res) => {
             WHERE id = $2
           `, [it.quantity, it.product_id]);
         }
+        await client.query(
+            `
+            DELETE FROM cart_items
+            WHERE user_id = (
+              SELECT user_id
+              FROM orders
+              WHERE id = $1
+            )
+            `,
+            [orderId]
+          );
+
 
         await client.query(`
           UPDATE payments
