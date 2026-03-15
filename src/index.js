@@ -21,9 +21,24 @@ import ordersRouter from './routes/orders.js'
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_LOCAL_URL,
+].filter(Boolean);
+
 app.use(cors({
-  origin: 'http://localhost:5173', // tu frontend
-  credentials: true, // si vas a usar cookies o headers auth
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS bloqueado para origen: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(morgan('dev'));
 app.use(express.json());
