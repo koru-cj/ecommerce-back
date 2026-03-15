@@ -246,8 +246,8 @@ router.post('/init', authRequired(), async (req, res) => {
       ]);
     }
 
-
-    // 8) Crear payment local
+    // 7) Antes se borraba carrito aqui, ya no. Lo hacemos luego de aprobado el pago.
+    // 8) Crear payment local 
     const paymentMethod = channel === 'mercadopago' ? 'mercadopago' : 'manual';
 
     const paymentMetadata = {

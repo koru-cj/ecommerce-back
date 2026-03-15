@@ -247,10 +247,15 @@ router.post('/webhook', async (req, res) => {
           mpStatus,
           mpStatusDetail,
           JSON.stringify(payment),
-          JSON.stringify({
-            stock_discounted: true,
-            stock_discounted_at: new Date().toISOString(),
-          }),
+          
+              JSON.stringify({
+              stock_discounted: true,
+              stock_discounted_at: new Date().toISOString(),
+              cart_cleared: true,
+              cart_cleared_at: new Date().toISOString(),
+            }),
+
+            
           existingPayment.id,
         ]);
 

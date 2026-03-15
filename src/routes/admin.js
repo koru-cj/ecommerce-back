@@ -9,9 +9,10 @@ const router = Router();
 // ==============================
 // 🏁 Dashboard admin welcome
 // ==============================
-router.get('/dashboard', authRequired('admin'), async (req, res) => {
-  res.json({ message: `Bienvenido al panel admin, usuario ID: ${req.user.id} `});
+router.get('/', authRequired('admin'), async (req, res) => {
+  res.json({ message: `Bienvenido al panel admin, usuario ID: ${req.user.id}` });
 });
+
 
 // ==============================
 // 👤 Usuarios
@@ -326,13 +327,13 @@ router.post('/orders/:id/confirm-payment', authRequired('admin'), async (req, re
       FROM orders o
       WHERE o.id = $1
       ON CONFLICT (order_id) DO UPDATE
-        SET status = 'approved', provider_id = 'manual-'||EXCLUDED.order_id
+        SET status = 'approved', provider_id = 'manual-'||EXCLUDED.order_id,updated_at = NOW()
     `, [id]);
 
     // 2) Marcar orden como pagada
     await pool.query(`
       UPDATE orders
-      SET status = 'paid', payment_status = 'approved', updated_at = NOW()
+        SET status = 'paid', payment_status = 'paid', updated_at = NOW()
       WHERE id = $1
     `, [id]);
 
