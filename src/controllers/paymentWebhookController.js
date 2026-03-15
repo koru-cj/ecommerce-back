@@ -13,7 +13,7 @@ if (!process.env.BACKEND_PUBLIC_URL) {
 const successUrl = `${process.env.FRONTEND_URL}/payment/success`;
 const pendingUrl = `${process.env.FRONTEND_URL}/payment/pending`;
 const failureUrl = `${process.env.FRONTEND_URL}/payment/failure`;
-const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`;
+const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/checkout/webhook`;
 
 console.log('MP URL DEBUG', {
   successUrl,
@@ -43,7 +43,7 @@ export const createPreference = async (req, res) => {
           failure: "https://tu-frontend.com/payment/failure",
         },
         auto_return: "approved",
-        notification_url: `${process.env.MP_BASE_URL}/api/payments/webhook`,
+        notification_url: `${process.env.MP_BASE_URL}/payments/webhook`,
         external_reference: "ORDER_12345",
       },
     });
