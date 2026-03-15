@@ -17,7 +17,6 @@ import settingsRouter from './routes/settings.js';
 import cartRouter from './routes/cart.js';
 import checkoutRouter from './routes/checkout.js';
 import ordersRouter from './routes/orders.js';
-import paymentRoutes from './routes/payments.js';
 
 dotenv.config();
 
@@ -69,7 +68,6 @@ app.use('/api/v1/settings', settingsRouter);
 app.use('/api/v1/cart', cartRouter);
 app.use('/api/v1/checkout', checkoutRouter);
 app.use('/api/v1/orders', ordersRouter);
-app.use('/api/v1/payments', paymentRoutes);
 
 (async () => {
   try {
