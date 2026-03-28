@@ -580,7 +580,7 @@ router.post('/webhook', async (req, res) => {
         localPayment.provider_id &&
         String(localPayment.provider_id) === String(payment.id) &&
         localPayment.status === 'approved' &&
-        orderRow.payment_status === 'paid' &&
+        orderRow.payment_status === 'approved' &&
         ['preparing', 'manual_review', 'shipped', 'delivered'].includes(orderRow.status);
 
       if (alreadyApprovedSamePayment) {
@@ -648,7 +648,7 @@ router.post('/webhook', async (req, res) => {
               UPDATE orders
               SET
                 status = 'manual_review',
-                payment_status = 'paid',
+                payment_status = 'approved',
                 updated_at = NOW()
               WHERE id = $1
               `,
@@ -713,7 +713,7 @@ router.post('/webhook', async (req, res) => {
           UPDATE orders
           SET
             status = 'preparing',
-            payment_status = 'paid',
+            payment_status = 'approved',
             updated_at = NOW()
           WHERE id = $1
           `,
@@ -766,8 +766,8 @@ router.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      if (['rejected', 'cancelled'].includes(mpStatus)) {
-        console.log('[MP webhook] procesando FAILED:', mpStatus);
+      if (mpStatus === 'rejected') {
+        console.log('[MP webhook] procesando REJECTED');
 
         await client.query(
           `
@@ -796,7 +796,48 @@ router.post('/webhook', async (req, res) => {
           UPDATE orders
           SET
             status = 'payment_failed',
-            payment_status = 'failed',
+            payment_status = 'rejected',
+            updated_at = NOW()
+          WHERE id = $1
+          `,
+          [orderId]
+        );
+
+        await client.query('COMMIT');
+        return res.sendStatus(200);
+      }
+
+      if (mpStatus === 'cancelled') {
+        console.log('[MP webhook] procesando CANCELLED');
+
+        await client.query(
+          `
+          UPDATE payments
+          SET
+            provider_id = $1,
+            provider_status = $2,
+            provider_status_detail = $3,
+            provider_payload = $4,
+            status = 'failed',
+            method = COALESCE(method, 'mercadopago'),
+            updated_at = NOW()
+          WHERE id = $5
+          `,
+          [
+            String(payment.id),
+            mpStatus,
+            mpStatusDetail,
+            JSON.stringify(payment),
+            localPayment.id,
+          ]
+        );
+
+        await client.query(
+          `
+          UPDATE orders
+          SET
+            status = 'payment_failed',
+            payment_status = 'cancelled',
             updated_at = NOW()
           WHERE id = $1
           `,
@@ -849,7 +890,7 @@ router.post('/webhook', async (req, res) => {
       }
 
       if (mpStatus === 'charged_back') {
-        console.log('[MP webhook] procesando CHARGEDBACK');
+        console.log('[MP webhook] procesando CHARGED_BACK');
 
         await client.query(
           `
@@ -878,7 +919,7 @@ router.post('/webhook', async (req, res) => {
           UPDATE orders
           SET
             status = 'manual_review',
-            payment_status = 'chargeback',
+            payment_status = 'cancelled',
             updated_at = NOW()
           WHERE id = $1
           `,
