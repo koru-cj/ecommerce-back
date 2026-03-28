@@ -32,17 +32,23 @@ function validateMercadoPagoSignature(req) {
   const secret = process.env.MP_WEBHOOK_SECRET;
 
   if (!secret) {
-    console.warn('MP_WEBHOOK_SECRET no configurado. Se omite validación de firma.');
+    console.warn('[MP webhook] MP_WEBHOOK_SECRET no configurado. Se omite validación de firma.');
     return true;
   }
 
   const xSignature = req.headers['x-signature'];
   const xRequestId = req.headers['x-request-id'];
 
-  if (!xSignature || !xRequestId) return false;
+  if (!xSignature || !xRequestId) {
+    console.warn('[MP webhook] faltan x-signature o x-request-id');
+    return false;
+  }
 
   const { ts, v1 } = parseXSignature(String(xSignature));
-  if (!ts || !v1) return false;
+  if (!ts || !v1) {
+    console.warn('[MP webhook] firma inválida: faltan ts o v1');
+    return false;
+  }
 
   const dataId =
     req.query['data.id'] ||
@@ -58,7 +64,19 @@ function validateMercadoPagoSignature(req) {
     .update(manifest)
     .digest('hex');
 
-  return hash === v1;
+  const valid = hash === v1;
+
+  if (!valid) {
+    console.warn('[MP webhook] firma inválida', {
+      dataId,
+      xRequestId,
+      ts,
+      expected: hash,
+      received: v1,
+    });
+  }
+
+  return valid;
 }
 
 async function getMercadoPagoPaymentById(paymentId) {
@@ -95,7 +113,6 @@ router.post('/init', authRequired(), async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1) Carrito + lock de productos para validar stock actual
     const { rows: items } = await client.query(
       `
       SELECT
@@ -116,14 +133,12 @@ router.post('/init', authRequired(), async (req, res) => {
       throw new Error('Carrito vacío');
     }
 
-    // 2) Validar stock disponible ahora, pero NO descontar todavía
     for (const it of items) {
       if (Number(it.stock) < Number(it.quantity)) {
         throw new Error(`Sin stock de ${it.name}`);
       }
     }
 
-    // 3) Totales
     const subtotal = items.reduce(
       (sum, it) => sum + Number(it.price) * Number(it.quantity),
       0
@@ -133,7 +148,6 @@ router.post('/init', authRequired(), async (req, res) => {
     const tax = 0;
     const total = subtotal - discount + shipping + tax;
 
-    // 4) Snapshot del usuario
     const {
       rows: [profile],
     } = await client.query(
@@ -172,7 +186,6 @@ router.post('/init', authRequired(), async (req, res) => {
       document_number: profile.document_number ?? null,
     };
 
-    // 5) Crear orden
     const idem = crypto.randomUUID();
 
     const {
@@ -231,7 +244,6 @@ router.post('/init', authRequired(), async (req, res) => {
 
     const orderId = order.id;
 
-    // 6) Insertar items sin descontar stock
     const insertItemSQL = `
       INSERT INTO order_items (order_id, product_id, quantity, unit_price)
       VALUES ($1, $2, $3, $4)
@@ -250,7 +262,6 @@ router.post('/init', authRequired(), async (req, res) => {
       ]);
     }
 
-    // 7) Crear payment local
     const paymentMethod = channel === 'mercadopago' ? 'mercadopago' : 'manual';
 
     const paymentMetadata = {
@@ -303,7 +314,6 @@ router.post('/init', authRequired(), async (req, res) => {
       ]
     );
 
-    // 8) Canal WhatsApp
     if (channel === 'whatsapp') {
       await client.query('COMMIT');
 
@@ -355,7 +365,6 @@ router.post('/init', authRequired(), async (req, res) => {
       });
     }
 
-    // 9) Canal Mercado Pago
     if (!process.env.MP_ACCESSTOKEN) {
       throw new Error('Falta configurar MP_ACCESSTOKEN.');
     }
@@ -371,11 +380,9 @@ router.post('/init', authRequired(), async (req, res) => {
     const successUrl = `${process.env.FRONTEND_URL}/payment/success`;
     const pendingUrl = `${process.env.FRONTEND_URL}/payment/pending`;
     const failureUrl = `${process.env.FRONTEND_URL}/payment/failure`;
-
-    // Se mantiene ASÍ para no romper tu flujo actual
     const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`;
 
-    console.log('MP preference URLs', {
+    console.log('[checkout init] MP preference URLs', {
       successUrl,
       pendingUrl,
       failureUrl,
@@ -412,7 +419,7 @@ router.post('/init', authRequired(), async (req, res) => {
       },
     });
 
-    console.log('MP preferenceResult', {
+    console.log('[checkout init] MP preferenceResult', {
       id: preferenceResult?.id,
       init_point: preferenceResult?.init_point,
       sandbox_init_point: preferenceResult?.sandbox_init_point,
@@ -467,13 +474,18 @@ router.post('/init', authRequired(), async (req, res) => {
  * Se mantiene acá para no romper el flujo actual.
  */
 router.post('/webhook', async (req, res) => {
-  res.sendStatus(200);
-
   try {
+    console.log('[MP webhook] headers:', {
+      xSignature: req.headers['x-signature'],
+      xRequestId: req.headers['x-request-id'],
+    });
+    console.log('[MP webhook] query:', req.query);
+    console.log('[MP webhook] body:', req.body);
+
     const isValid = validateMercadoPagoSignature(req);
     if (!isValid) {
-      console.warn('Webhook Mercado Pago inválido: firma incorrecta');
-      return;
+      console.warn('[MP webhook] firma incorrecta');
+      return res.status(400).json({ error: 'Firma inválida' });
     }
 
     const topic =
@@ -482,8 +494,11 @@ router.post('/webhook', async (req, res) => {
       req.query.topic ||
       req.body?.topic;
 
+    console.log('[MP webhook] topic:', topic);
+
     if (topic !== 'payment') {
-      return;
+      console.log('[MP webhook] tópico ignorado');
+      return res.sendStatus(200);
     }
 
     const mpPaymentId =
@@ -492,17 +507,27 @@ router.post('/webhook', async (req, res) => {
       req.query.id ||
       req.body?.id;
 
+    console.log('[MP webhook] mpPaymentId:', mpPaymentId);
+
     if (!mpPaymentId) {
-      console.warn('Webhook Mercado Pago sin payment id');
-      return;
+      console.warn('[MP webhook] sin payment id');
+      return res.status(400).json({ error: 'Payment id ausente' });
     }
 
     const payment = await getMercadoPagoPaymentById(mpPaymentId);
+
+    console.log('[MP webhook] payment lookup ok:', {
+      id: payment?.id,
+      status: payment?.status,
+      status_detail: payment?.status_detail,
+      external_reference: payment?.external_reference,
+    });
+
     const orderId = Number(payment.external_reference);
 
     if (!Number.isInteger(orderId) || orderId <= 0) {
-      console.warn('Pago MP sin external_reference usable');
-      return;
+      console.warn('[MP webhook] external_reference inválido:', payment.external_reference);
+      return res.status(400).json({ error: 'external_reference inválido' });
     }
 
     const mpStatus = payment.status ?? null;
@@ -527,6 +552,8 @@ router.post('/webhook', async (req, res) => {
         [orderId]
       );
 
+      console.log('[MP webhook] localPayment:', localPayment);
+
       if (!localPayment) {
         throw new Error(`No existe payment local para la orden ${orderId}`);
       }
@@ -543,6 +570,8 @@ router.post('/webhook', async (req, res) => {
         [orderId]
       );
 
+      console.log('[MP webhook] orderRow:', orderRow);
+
       if (!orderRow) {
         throw new Error(`No existe la orden ${orderId}`);
       }
@@ -555,12 +584,14 @@ router.post('/webhook', async (req, res) => {
         ['preparing', 'manual_review', 'shipped', 'delivered'].includes(orderRow.status);
 
       if (alreadyApprovedSamePayment) {
+        console.log('[MP webhook] pago ya procesado, idempotencia OK');
         await client.query('COMMIT');
-        return;
+        return res.sendStatus(200);
       }
 
-      // Pago aprobado: acá se descuenta stock de verdad
       if (mpStatus === 'approved') {
+        console.log('[MP webhook] procesando APPROVED para order:', orderId);
+
         const { rows: orderItems } = await client.query(
           `
           SELECT oi.product_id, oi.quantity, p.stock, p.name
@@ -572,8 +603,18 @@ router.post('/webhook', async (req, res) => {
           [orderId]
         );
 
+        console.log('[MP webhook] orderItems:', orderItems);
+
         for (const it of orderItems) {
           if (Number(it.stock) < Number(it.quantity)) {
+            console.error('[MP webhook] approved pero sin stock', {
+              orderId,
+              productId: it.product_id,
+              productName: it.name,
+              stock: it.stock,
+              quantity: it.quantity,
+            });
+
             await client.query(
               `
               UPDATE payments
@@ -615,8 +656,7 @@ router.post('/webhook', async (req, res) => {
             );
 
             await client.query('COMMIT');
-            console.error(`Orden ${orderId} aprobada en MP pero sin stock suficiente.`);
-            return;
+            return res.sendStatus(200);
           }
         }
 
@@ -681,10 +721,13 @@ router.post('/webhook', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return;
+        console.log('[MP webhook] APPROVED commit OK para order:', orderId);
+        return res.sendStatus(200);
       }
 
       if (['pending', 'in_process', 'in_mediation'].includes(mpStatus)) {
+        console.log('[MP webhook] procesando estado pendiente:', mpStatus);
+
         await client.query(
           `
           UPDATE payments
@@ -720,10 +763,12 @@ router.post('/webhook', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return;
+        return res.sendStatus(200);
       }
 
       if (['rejected', 'cancelled'].includes(mpStatus)) {
+        console.log('[MP webhook] procesando FAILED:', mpStatus);
+
         await client.query(
           `
           UPDATE payments
@@ -759,10 +804,12 @@ router.post('/webhook', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return;
+        return res.sendStatus(200);
       }
 
       if (mpStatus === 'refunded') {
+        console.log('[MP webhook] procesando REFUNDED');
+
         await client.query(
           `
           UPDATE payments
@@ -798,10 +845,12 @@ router.post('/webhook', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return;
+        return res.sendStatus(200);
       }
 
       if (mpStatus === 'charged_back') {
+        console.log('[MP webhook] procesando CHARGEDBACK');
+
         await client.query(
           `
           UPDATE payments
@@ -837,8 +886,10 @@ router.post('/webhook', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return;
+        return res.sendStatus(200);
       }
+
+      console.log('[MP webhook] estado no contemplado, guardando payload:', mpStatus);
 
       await client.query(
         `
@@ -862,14 +913,17 @@ router.post('/webhook', async (req, res) => {
       );
 
       await client.query('COMMIT');
+      return res.sendStatus(200);
     } catch (err) {
       await client.query('ROLLBACK');
+      console.error('[MP webhook] rollback por error:', err);
       throw err;
     } finally {
       client.release();
     }
   } catch (error) {
     console.error('CHECKOUT WEBHOOK ERROR:', error);
+    return res.sendStatus(500);
   }
 });
 
