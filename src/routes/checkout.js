@@ -134,7 +134,9 @@ router.post('/init', authRequired(), async (req, res) => {
     const total = subtotal - discount + shipping + tax;
 
     // 4) Snapshot del usuario
-    const { rows: [profile] } = await client.query(
+    const {
+      rows: [profile],
+    } = await client.query(
       `
       SELECT
         name,
@@ -173,7 +175,9 @@ router.post('/init', authRequired(), async (req, res) => {
     // 5) Crear orden
     const idem = crypto.randomUUID();
 
-    const { rows: [order] } = await client.query(
+    const {
+      rows: [order],
+    } = await client.query(
       `
       INSERT INTO orders (
         user_id,
@@ -227,7 +231,7 @@ router.post('/init', authRequired(), async (req, res) => {
 
     const orderId = order.id;
 
-    // 6) Insertar items SIN descontar stock
+    // 6) Insertar items sin descontar stock
     const insertItemSQL = `
       INSERT INTO order_items (order_id, product_id, quantity, unit_price)
       VALUES ($1, $2, $3, $4)
@@ -246,8 +250,7 @@ router.post('/init', authRequired(), async (req, res) => {
       ]);
     }
 
-    // 7) Antes se borraba carrito aqui, ya no. Lo hacemos luego de aprobado el pago.
-    // 8) Crear payment local 
+    // 7) Crear payment local
     const paymentMethod = channel === 'mercadopago' ? 'mercadopago' : 'manual';
 
     const paymentMetadata = {
@@ -263,7 +266,9 @@ router.post('/init', authRequired(), async (req, res) => {
       })),
     };
 
-    const { rows: [paymentRow] } = await client.query(
+    const {
+      rows: [paymentRow],
+    } = await client.query(
       `
       INSERT INTO payments (
         order_id,
@@ -298,7 +303,7 @@ router.post('/init', authRequired(), async (req, res) => {
       ]
     );
 
-    // 9) Canal WhatsApp
+    // 8) Canal WhatsApp
     if (channel === 'whatsapp') {
       await client.query('COMMIT');
 
@@ -350,7 +355,7 @@ router.post('/init', authRequired(), async (req, res) => {
       });
     }
 
-    // 10) Canal Mercado Pago
+    // 9) Canal Mercado Pago
     if (!process.env.MP_ACCESSTOKEN) {
       throw new Error('Falta configurar MP_ACCESSTOKEN.');
     }
@@ -366,6 +371,8 @@ router.post('/init', authRequired(), async (req, res) => {
     const successUrl = `${process.env.FRONTEND_URL}/payment/success`;
     const pendingUrl = `${process.env.FRONTEND_URL}/payment/pending`;
     const failureUrl = `${process.env.FRONTEND_URL}/payment/failure`;
+
+    // Se mantiene ASÍ para no romper tu flujo actual
     const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`;
 
     console.log('MP preference URLs', {
@@ -457,6 +464,7 @@ router.post('/init', authRequired(), async (req, res) => {
 
 /**
  * POST /api/v1/checkout/webhook
+ * Se mantiene acá para no romper el flujo actual.
  */
 router.post('/webhook', async (req, res) => {
   res.sendStatus(200);
@@ -492,17 +500,22 @@ router.post('/webhook', async (req, res) => {
     const payment = await getMercadoPagoPaymentById(mpPaymentId);
     const orderId = Number(payment.external_reference);
 
-    if (!orderId) {
+    if (!Number.isInteger(orderId) || orderId <= 0) {
       console.warn('Pago MP sin external_reference usable');
       return;
     }
+
+    const mpStatus = payment.status ?? null;
+    const mpStatusDetail = payment.status_detail ?? null;
 
     const client = await pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      const { rows: [localPayment] } = await client.query(
+      const {
+        rows: [localPayment],
+      } = await client.query(
         `
         SELECT id, order_id, status, method, provider_id
         FROM payments
@@ -518,9 +531,11 @@ router.post('/webhook', async (req, res) => {
         throw new Error(`No existe payment local para la orden ${orderId}`);
       }
 
-      const { rows: [orderRow] } = await client.query(
+      const {
+        rows: [orderRow],
+      } = await client.query(
         `
-        SELECT id, status, payment_status
+        SELECT id, user_id, status, payment_status
         FROM orders
         WHERE id = $1
         FOR UPDATE
@@ -536,15 +551,13 @@ router.post('/webhook', async (req, res) => {
         localPayment.provider_id &&
         String(localPayment.provider_id) === String(payment.id) &&
         localPayment.status === 'approved' &&
-        orderRow.payment_status === 'paid';
+        orderRow.payment_status === 'paid' &&
+        ['preparing', 'manual_review', 'shipped', 'delivered'].includes(orderRow.status);
 
       if (alreadyApprovedSamePayment) {
         await client.query('COMMIT');
         return;
       }
-
-      const mpStatus = payment.status ?? null;
-      const mpStatusDetail = payment.status_detail ?? null;
 
       // Pago aprobado: acá se descuenta stock de verdad
       if (mpStatus === 'approved') {
@@ -570,6 +583,7 @@ router.post('/webhook', async (req, res) => {
                 provider_status_detail = $3,
                 provider_payload = $4,
                 status = 'approved',
+                method = COALESCE(method, 'mercadopago'),
                 metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
                 updated_at = NOW()
               WHERE id = $6
@@ -619,6 +633,14 @@ router.post('/webhook', async (req, res) => {
 
         await client.query(
           `
+          DELETE FROM cart_items
+          WHERE user_id = $1
+          `,
+          [orderRow.user_id]
+        );
+
+        await client.query(
+          `
           UPDATE payments
           SET
             provider_id = $1,
@@ -626,6 +648,7 @@ router.post('/webhook', async (req, res) => {
             provider_status_detail = $3,
             provider_payload = $4,
             status = 'approved',
+            method = COALESCE(method, 'mercadopago'),
             metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
             updated_at = NOW()
           WHERE id = $6
@@ -638,6 +661,8 @@ router.post('/webhook', async (req, res) => {
             JSON.stringify({
               stock_discounted: true,
               stock_discounted_at: new Date().toISOString(),
+              cart_cleared: true,
+              cart_cleared_at: new Date().toISOString(),
             }),
             localPayment.id,
           ]
@@ -647,7 +672,7 @@ router.post('/webhook', async (req, res) => {
           `
           UPDATE orders
           SET
-            status = 'paid',
+            status = 'preparing',
             payment_status = 'paid',
             updated_at = NOW()
           WHERE id = $1
@@ -669,6 +694,7 @@ router.post('/webhook', async (req, res) => {
             provider_status_detail = $3,
             provider_payload = $4,
             status = 'pending',
+            method = COALESCE(method, 'mercadopago'),
             updated_at = NOW()
           WHERE id = $5
           `,
@@ -697,7 +723,7 @@ router.post('/webhook', async (req, res) => {
         return;
       }
 
-      if (['rejected', 'cancelled', 'refunded', 'charged_back'].includes(mpStatus)) {
+      if (['rejected', 'cancelled'].includes(mpStatus)) {
         await client.query(
           `
           UPDATE payments
@@ -707,6 +733,7 @@ router.post('/webhook', async (req, res) => {
             provider_status_detail = $3,
             provider_payload = $4,
             status = 'failed',
+            method = COALESCE(method, 'mercadopago'),
             updated_at = NOW()
           WHERE id = $5
           `,
@@ -735,6 +762,84 @@ router.post('/webhook', async (req, res) => {
         return;
       }
 
+      if (mpStatus === 'refunded') {
+        await client.query(
+          `
+          UPDATE payments
+          SET
+            provider_id = $1,
+            provider_status = $2,
+            provider_status_detail = $3,
+            provider_payload = $4,
+            status = 'refunded',
+            method = COALESCE(method, 'mercadopago'),
+            updated_at = NOW()
+          WHERE id = $5
+          `,
+          [
+            String(payment.id),
+            mpStatus,
+            mpStatusDetail,
+            JSON.stringify(payment),
+            localPayment.id,
+          ]
+        );
+
+        await client.query(
+          `
+          UPDATE orders
+          SET
+            status = 'cancelled',
+            payment_status = 'refunded',
+            updated_at = NOW()
+          WHERE id = $1
+          `,
+          [orderId]
+        );
+
+        await client.query('COMMIT');
+        return;
+      }
+
+      if (mpStatus === 'charged_back') {
+        await client.query(
+          `
+          UPDATE payments
+          SET
+            provider_id = $1,
+            provider_status = $2,
+            provider_status_detail = $3,
+            provider_payload = $4,
+            status = 'chargeback',
+            method = COALESCE(method, 'mercadopago'),
+            updated_at = NOW()
+          WHERE id = $5
+          `,
+          [
+            String(payment.id),
+            mpStatus,
+            mpStatusDetail,
+            JSON.stringify(payment),
+            localPayment.id,
+          ]
+        );
+
+        await client.query(
+          `
+          UPDATE orders
+          SET
+            status = 'manual_review',
+            payment_status = 'chargeback',
+            updated_at = NOW()
+          WHERE id = $1
+          `,
+          [orderId]
+        );
+
+        await client.query('COMMIT');
+        return;
+      }
+
       await client.query(
         `
         UPDATE payments
@@ -743,6 +848,7 @@ router.post('/webhook', async (req, res) => {
           provider_status = $2,
           provider_status_detail = $3,
           provider_payload = $4,
+          method = COALESCE(method, 'mercadopago'),
           updated_at = NOW()
         WHERE id = $5
         `,
