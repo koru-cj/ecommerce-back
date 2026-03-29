@@ -382,13 +382,13 @@ router.post('/init', authRequired(), async (req, res) => {
     const failureUrl = `${process.env.FRONTEND_URL}/payment/failure`;
     const notificationUrl = `${process.env.BACKEND_PUBLIC_URL}/api/v1/checkout/webhook`;
 
-    console.log('[checkout init] MP preference URLs', {
-      successUrl,
-      pendingUrl,
-      failureUrl,
-      notificationUrl,
-      orderId,
-    });
+    // console.log('[checkout init] MP preference URLs', {
+    //   successUrl,
+    //   pendingUrl,
+    //   failureUrl,
+    //   notificationUrl,
+    //   orderId,
+    // });
 
     const preferenceResult = await preference.create({
       body: {
@@ -419,11 +419,11 @@ router.post('/init', authRequired(), async (req, res) => {
       },
     });
 
-    console.log('[checkout init] MP preferenceResult', {
-      id: preferenceResult?.id,
-      init_point: preferenceResult?.init_point,
-      sandbox_init_point: preferenceResult?.sandbox_init_point,
-    });
+    // console.log('[checkout init] MP preferenceResult', {
+    //   id: preferenceResult?.id,
+    //   init_point: preferenceResult?.init_point,
+    //   sandbox_init_point: preferenceResult?.sandbox_init_point,
+    // });
 
     if (!preferenceResult?.init_point) {
       throw new Error('Mercado Pago no devolvió init_point.');
@@ -475,12 +475,12 @@ router.post('/init', authRequired(), async (req, res) => {
  */
 router.post('/webhook', async (req, res) => {
   try {
-    console.log('[MP webhook] headers:', {
-      xSignature: req.headers['x-signature'],
-      xRequestId: req.headers['x-request-id'],
-    });
-    console.log('[MP webhook] query:', req.query);
-    console.log('[MP webhook] body:', req.body);
+    // console.log('[MP webhook] headers:', {
+    //   xSignature: req.headers['x-signature'],
+    //   xRequestId: req.headers['x-request-id'],
+    // });
+    // console.log('[MP webhook] query:', req.query);
+    // console.log('[MP webhook] body:', req.body);
 
     const isValid = validateMercadoPagoSignature(req);
     if (!isValid) {
@@ -494,7 +494,7 @@ router.post('/webhook', async (req, res) => {
       req.query.topic ||
       req.body?.topic;
 
-    console.log('[MP webhook] topic:', topic);
+    // console.log('[MP webhook] topic:', topic);
 
     if (topic !== 'payment') {
       console.log('[MP webhook] tópico ignorado');
@@ -507,7 +507,7 @@ router.post('/webhook', async (req, res) => {
       req.query.id ||
       req.body?.id;
 
-    console.log('[MP webhook] mpPaymentId:', mpPaymentId);
+    // console.log('[MP webhook] mpPaymentId:', mpPaymentId);
 
     if (!mpPaymentId) {
       console.warn('[MP webhook] sin payment id');
@@ -516,12 +516,12 @@ router.post('/webhook', async (req, res) => {
 
     const payment = await getMercadoPagoPaymentById(mpPaymentId);
 
-    console.log('[MP webhook] payment lookup ok:', {
-      id: payment?.id,
-      status: payment?.status,
-      status_detail: payment?.status_detail,
-      external_reference: payment?.external_reference,
-    });
+    // console.log('[MP webhook] payment lookup ok:', {
+    //   id: payment?.id,
+    //   status: payment?.status,
+    //   status_detail: payment?.status_detail,
+    //   external_reference: payment?.external_reference,
+    // });
 
     const orderId = Number(payment.external_reference);
 
@@ -552,7 +552,7 @@ router.post('/webhook', async (req, res) => {
         [orderId]
       );
 
-      console.log('[MP webhook] localPayment:', localPayment);
+      // console.log('[MP webhook] localPayment:', localPayment);
 
       if (!localPayment) {
         throw new Error(`No existe payment local para la orden ${orderId}`);
@@ -570,7 +570,7 @@ router.post('/webhook', async (req, res) => {
         [orderId]
       );
 
-      console.log('[MP webhook] orderRow:', orderRow);
+      // console.log('[MP webhook] orderRow:', orderRow);
 
       if (!orderRow) {
         throw new Error(`No existe la orden ${orderId}`);
@@ -590,7 +590,7 @@ router.post('/webhook', async (req, res) => {
       }
 
       if (mpStatus === 'approved') {
-        console.log('[MP webhook] procesando APPROVED para order:', orderId);
+        // console.log('[MP webhook] procesando APPROVED para order:', orderId);
 
         const { rows: orderItems } = await client.query(
           `
@@ -603,7 +603,7 @@ router.post('/webhook', async (req, res) => {
           [orderId]
         );
 
-        console.log('[MP webhook] orderItems:', orderItems);
+        // console.log('[MP webhook] orderItems:', orderItems);
 
         for (const it of orderItems) {
           if (Number(it.stock) < Number(it.quantity)) {

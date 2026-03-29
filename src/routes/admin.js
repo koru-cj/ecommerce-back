@@ -4,6 +4,39 @@ import { Router } from 'express';
 import { pool } from '../db.js';
 import { authRequired } from '../middlewares/authMiddleware.js';
 
+function buildOrderApprovedEmailData(orderRow) {
+  return {
+    orderId: orderRow.id,
+    customerName: orderRow.user_name,
+    customerEmail: orderRow.user_email,
+    total: orderRow.total,
+    channel: orderRow.channel,
+    shippingAddress: orderRow.shipping_address,
+    billingInfo: orderRow.billing_info,
+    items: orderRow.items || [],
+  };
+}
+
+/**
+ * Placeholder para etapa 1.
+ * Acá después enchufamos Resend / Nodemailer / lo que decidas.
+ */
+async function sendOrderApprovedNotifications(orderRow) {
+  const emailData = buildOrderApprovedEmailData(orderRow);
+
+  console.log('[ADMIN NOTIFY] Pedido aprobado, enviar emails:', {
+    toCustomer: emailData.customerEmail,
+    internalTo: process.env.BUSINESS_EMAIL || process.env.SMTP_FROM || null,
+    orderId: emailData.orderId,
+    total: emailData.total,
+    channel: emailData.channel,
+  });
+
+  // TODO etapa 1:
+  // 1) enviar email al cliente
+  // 2) enviar email interno al negocio
+}
+
 const router = Router();
 
 // ==============================
@@ -432,6 +465,401 @@ router.get('/orders/:id', authRequired('admin'), async (req, res) => {
   }
 });
 
+// ==============================
+// 🧾 Pedidos (Admin)
+// ==============================
 
+router.get('/orders', authRequired('admin'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        o.id,
+        o.user_id,
+        o.status,
+        o.payment_status,
+        o.channel,
+        o.currency,
+        o.subtotal::numeric AS subtotal,
+        o.discount::numeric AS discount,
+        o.shipping_cost::numeric AS shipping_cost,
+        o.tax::numeric AS tax,
+        o.total::numeric AS total,
+        o.created_at,
+        o.updated_at,
+        u.name AS user_name,
+        u.email AS user_email,
+        u.phone AS user_phone,
+        p.id AS payment_id,
+        p.method AS payment_method,
+        p.status AS payment_local_status,
+        p.provider_id,
+        p.provider_reference,
+        p.provider_status,
+        p.provider_status_detail,
+        p.amount::numeric AS payment_amount
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN payments p ON p.order_id = o.id
+      ORDER BY o.created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error al obtener pedidos admin:', err);
+    res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+router.get('/orders/:id', authRequired('admin'), async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'ID de pedido inválido' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        o.id,
+        o.user_id,
+        o.status,
+        o.payment_status,
+        o.channel,
+        o.currency,
+        o.subtotal::numeric AS subtotal,
+        o.discount::numeric AS discount,
+        o.shipping_cost::numeric AS shipping_cost,
+        o.tax::numeric AS tax,
+        o.total::numeric AS total,
+        o.shipping_address,
+        o.billing_info,
+        o.notes,
+        o.created_at,
+        o.updated_at,
+        u.name AS user_name,
+        u.email AS user_email,
+        u.phone AS user_phone,
+        json_build_object(
+          'id', p.id,
+          'amount', p.amount::numeric,
+          'currency', p.currency,
+          'method', p.method,
+          'status', p.status,
+          'provider_id', p.provider_id,
+          'provider_reference', p.provider_reference,
+          'provider_status', p.provider_status,
+          'provider_status_detail', p.provider_status_detail,
+          'created_at', p.created_at,
+          'updated_at', p.updated_at
+        ) AS payment,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'product_id', oi.product_id,
+              'name', pr.name,
+              'quantity', oi.quantity,
+              'unit_price', oi.unit_price::numeric
+            )
+            ORDER BY oi.id
+          ) FILTER (WHERE oi.product_id IS NOT NULL),
+          '[]'::json
+        ) AS items
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN payments p ON p.order_id = o.id
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN products pr ON pr.id = oi.product_id
+      WHERE o.id = $1
+      GROUP BY o.id, u.id, p.id
+    `, [orderId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error al obtener detalle admin del pedido:', err);
+    res.status(500).json({ error: 'Error al obtener detalle del pedido' });
+  }
+});
+
+router.get('/orders/:id', authRequired('admin'), async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'ID de pedido inválido' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        o.id,
+        o.user_id,
+        o.status,
+        o.payment_status,
+        o.channel,
+        o.currency,
+        o.subtotal::numeric AS subtotal,
+        o.discount::numeric AS discount,
+        o.shipping_cost::numeric AS shipping_cost,
+        o.tax::numeric AS tax,
+        o.total::numeric AS total,
+        o.shipping_address,
+        o.billing_info,
+        o.notes,
+        o.created_at,
+        o.updated_at,
+        u.name AS user_name,
+        u.email AS user_email,
+        u.phone AS user_phone,
+        json_build_object(
+          'id', p.id,
+          'amount', p.amount::numeric,
+          'currency', p.currency,
+          'method', p.method,
+          'status', p.status,
+          'provider_id', p.provider_id,
+          'provider_reference', p.provider_reference,
+          'provider_status', p.provider_status,
+          'provider_status_detail', p.provider_status_detail,
+          'created_at', p.created_at,
+          'updated_at', p.updated_at
+        ) AS payment,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'product_id', oi.product_id,
+              'name', pr.name,
+              'quantity', oi.quantity,
+              'unit_price', oi.unit_price::numeric
+            )
+            ORDER BY oi.id
+          ) FILTER (WHERE oi.product_id IS NOT NULL),
+          '[]'::json
+        ) AS items
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN payments p ON p.order_id = o.id
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN products pr ON pr.id = oi.product_id
+      WHERE o.id = $1
+      GROUP BY o.id, u.id, p.id
+    `, [orderId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error al obtener detalle admin del pedido:', err);
+    res.status(500).json({ error: 'Error al obtener detalle del pedido' });
+  }
+});
+router.post('/orders/:id/approve-payment', authRequired('admin'), async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'ID de pedido inválido' });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const {
+      rows: [orderRow],
+    } = await client.query(`
+      SELECT
+        o.id,
+        o.user_id,
+        o.status,
+        o.payment_status,
+        o.channel,
+        o.total,
+        o.shipping_address,
+        o.billing_info,
+        u.name AS user_name,
+        u.email AS user_email,
+        u.phone AS user_phone
+      FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      WHERE o.id = $1
+      FOR UPDATE OF o
+    `, [orderId]);
+
+    if (!orderRow) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    if (orderRow.channel !== 'whatsapp') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Solo se puede aprobar manualmente un pedido del canal WhatsApp',
+      });
+    }
+
+    if (orderRow.payment_status !== 'pending' || orderRow.status !== 'pending_payment') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'El pedido no está en un estado válido para aprobar pago manualmente',
+      });
+    }
+
+    const {
+      rows: [paymentRow],
+    } = await client.query(`
+      SELECT id, status, method, metadata
+      FROM payments
+      WHERE order_id = $1
+      ORDER BY id ASC
+      LIMIT 1
+      FOR UPDATE
+    `, [orderId]);
+
+    if (!paymentRow) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'No se encontró el pago local del pedido' });
+    }
+
+    await client.query(`
+      UPDATE payments
+      SET
+        status = 'approved',
+        method = COALESCE(method, 'manual'),
+        provider_status = 'manual_approved',
+        provider_status_detail = 'approved_by_admin',
+        metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+        updated_at = NOW()
+      WHERE id = $2
+    `, [
+      JSON.stringify({
+        approved_by_admin: true,
+        approved_by_admin_id: req.user.id,
+        approved_by_admin_at: new Date().toISOString(),
+      }),
+      paymentRow.id,
+    ]);
+
+    await client.query(`
+      UPDATE orders
+      SET
+        payment_status = 'approved',
+        status = 'preparing',
+        updated_at = NOW()
+      WHERE id = $1
+    `, [orderId]);
+
+    const itemsResult = await client.query(`
+      SELECT
+        oi.product_id,
+        pr.name,
+        oi.quantity,
+        oi.unit_price::numeric AS unit_price
+      FROM order_items oi
+      JOIN products pr ON pr.id = oi.product_id
+      WHERE oi.order_id = $1
+      ORDER BY oi.id
+    `, [orderId]);
+
+    await client.query('COMMIT');
+
+    const fullOrderRow = {
+      ...orderRow,
+      status: 'preparing',
+      payment_status: 'approved',
+      items: itemsResult.rows,
+    };
+
+    try {
+      await sendOrderApprovedNotifications(fullOrderRow);
+    } catch (notifyErr) {
+      console.error('Error enviando notificaciones de pedido aprobado:', notifyErr);
+    }
+
+    return res.json({
+      message: 'Pago aprobado manualmente. El pedido pasó a preparación.',
+      order: fullOrderRow,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error al aprobar pago manual:', err);
+    return res.status(500).json({ error: 'Error al aprobar pago manualmente' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/orders/:id/mark-shipped', authRequired('admin'), async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'ID de pedido inválido' });
+  }
+
+  try {
+    const result = await pool.query(`
+      UPDATE orders
+      SET
+        status = 'shipped',
+        updated_at = NOW()
+      WHERE id = $1
+        AND payment_status = 'approved'
+        AND status = 'preparing'
+      RETURNING *
+    `, [orderId]);
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        error: 'El pedido no está en un estado válido para marcar como enviado',
+      });
+    }
+
+    return res.json({
+      message: 'Pedido marcado como enviado',
+      order: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Error al marcar pedido como enviado:', err);
+    return res.status(500).json({ error: 'Error al marcar pedido como enviado' });
+  }
+});
+router.post('/orders/:id/mark-delivered', authRequired('admin'), async (req, res) => {
+  const orderId = parseInt(req.params.id, 10);
+
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ error: 'ID de pedido inválido' });
+  }
+
+  try {
+    const result = await pool.query(`
+      UPDATE orders
+      SET
+        status = 'delivered',
+        updated_at = NOW()
+      WHERE id = $1
+        AND payment_status = 'approved'
+        AND status = 'shipped'
+      RETURNING *
+    `, [orderId]);
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({
+        error: 'El pedido no está en un estado válido para marcar como entregado',
+      });
+    }
+
+    return res.json({
+      message: 'Pedido marcado como entregado',
+      order: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Error al marcar pedido como entregado:', err);
+    return res.status(500).json({ error: 'Error al marcar pedido como entregado' });
+  }
+});
 
 export default router;
