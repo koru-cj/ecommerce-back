@@ -128,7 +128,7 @@ router.post('/quote', async (req, res) => {
         </p>
       </div>
     `;
-
+ 
     console.log({
             email,
             normalizedIds,
